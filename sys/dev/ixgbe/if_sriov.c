@@ -699,8 +699,10 @@ ixgbe_if_iov_init(if_ctx_t ctx, u16 num_vfs, const nvlist_t *config)
 	}
 
 	sc->num_vfs = num_vfs;
-	ixgbe_if_init(sc->ctx);
+	/* set the SRIOV flag now as it's needed
+	 * by ixgbe_if_init() */
 	sc->feat_en |= IXGBE_FEATURE_SRIOV;
+	ixgbe_if_init(sc->ctx);
 
 	return (retval);
 
