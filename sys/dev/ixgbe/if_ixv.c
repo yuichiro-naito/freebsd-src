@@ -721,15 +721,17 @@ ixv_msix_mbx(void *arg)
 	++sc->link_irq;
 
 	/* First get the cause */
-	reg = IXGBE_READ_REG(hw, IXGBE_VTEICS);
+	reg = IXGBE_READ_REG(hw, IXGBE_VTEICR);
+#if 0   /* We use auto-clear, so it's not required to write VTEICR. */
 	/* Clear interrupt with write */
-	IXGBE_WRITE_REG(hw, IXGBE_VTEICR, reg);
+	IXGBE_WRITE_REG(hw, IXGBE_VTEICR, (1 << sc->vector));
+#endif
 
 	/* Link status change */
-	if (reg & IXGBE_EICR_LSC)
+	if (reg & (1 << sc->vector))
 		iflib_admin_intr_deferred(sc->ctx);
 
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, IXGBE_EIMS_OTHER);
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << sc->vector));
 
 	return (FILTER_HANDLED);
 } /* ixv_msix_mbx */
@@ -1603,15 +1605,19 @@ ixv_if_enable_intr(if_ctx_t ctx)
 	struct ixgbe_softc  *sc = iflib_get_softc(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
 	struct ix_rx_queue *que = sc->rx_queues;
-	u32             mask = (IXGBE_EIMS_ENABLE_MASK & ~IXGBE_EIMS_RTX_QUEUE);
+	u32             mask;
+	int i;
 
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, mask);
-
-	mask = IXGBE_EIMS_ENABLE_MASK;
-	mask &= ~(IXGBE_EIMS_OTHER | IXGBE_EIMS_LSC);
+	/* For VTEIAC */
+	mask = (1 << sc->vector);
+	for (i = 0; i < sc->num_rx_queues; i++, que++)
+		mask |= (1 << que->msix);
 	IXGBE_WRITE_REG(hw, IXGBE_VTEIAC, mask);
 
-	for (int i = 0; i < sc->num_rx_queues; i++, que++)
+	/* For VTEIMS */
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << sc->vector));
+	que = sc->rx_queues;
+	for (i = 0; i < sc->num_rx_queues; i++, que++)
 		ixv_enable_queue(sc, que->msix);
 
 	IXGBE_WRITE_FLUSH(hw);
