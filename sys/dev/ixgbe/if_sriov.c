@@ -255,6 +255,17 @@ ixgbe_vf_set_default_vlan(struct ixgbe_softc *sc, struct ixgbe_vf *vf,
 	IXGBE_WRITE_REG(hw, IXGBE_VMVIR(vf->pool), vmvir);
 } /* ixgbe_vf_set_default_vlan */
 
+static void
+ixgbe_clear_vfmbmem(struct ixgbe_softc *sc, struct ixgbe_vf *vf)
+{
+	struct ixgbe_hw *hw = &sc->hw;
+	uint32_t vf_index = IXGBE_VF_INDEX(vf->pool);
+	uint16_t mbx_size = hw->mbx.size;
+	uint16_t i;
+
+	for (i = 0; i < mbx_size; ++i)
+		IXGBE_WRITE_REG_ARRAY(hw, IXGBE_PFMBMEM(vf_index), i, 0x0);
+} /* ixgbe_clear_vfmbmem */
 
 static boolean_t
 ixgbe_vf_frame_size_compatible(struct ixgbe_softc *sc, struct ixgbe_vf *vf)
@@ -311,6 +322,8 @@ ixgbe_process_vf_reset(struct ixgbe_softc *sc, struct ixgbe_vf *vf)
 	// XXX clear multicast addresses
 
 	ixgbe_clear_rar(&sc->hw, vf->rar_index);
+	ixgbe_clear_vfmbmem(sc, vf);
+	ixgbe_toggle_txdctl(&sc->hw, IXGBE_VF_INDEX(vf->pool));
 
 	vf->api_ver = IXGBE_API_VER_UNKNOWN;
 } /* ixgbe_process_vf_reset */
