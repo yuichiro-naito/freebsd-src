@@ -599,7 +599,9 @@ ixv_if_init(if_ctx_t ctx)
 	struct ifnet    *ifp = iflib_get_ifp(ctx);
 	device_t        dev = iflib_get_dev(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
-	int             error = 0;
+	struct ix_rx_queue *que = sc->rx_queues;
+	int             i, error = 0;
+	u32             mask;
 
 	INIT_DEBUGOUT("ixv_if_init: begin");
 	hw->adapter_stopped = false;
@@ -639,7 +641,10 @@ ixv_if_init(if_ctx_t ctx)
 	ixv_configure_ivars(sc);
 
 	/* Set up auto-mask */
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIAM, IXGBE_EICS_RTX_QUEUE);
+	mask = (1 << (sc->vector + 1));
+	for (i = 0; i< sc->num_rx_queues; i++, que++)
+		mask |= (1 << (que->msix + 1));
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIAM, mask);
 
 	/* Set moderation on the Link interrupt */
 	IXGBE_WRITE_REG(hw, IXGBE_VTEITR(sc->vector), IXGBE_LINK_ITR);
@@ -728,10 +733,10 @@ ixv_msix_mbx(void *arg)
 #endif
 
 	/* Link status change */
-	if (reg & (1 << sc->vector))
+	if (reg & (1 << (sc->vector + 1)))
 		iflib_admin_intr_deferred(sc->ctx);
 
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << sc->vector));
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << (sc->vector + 1)));
 
 	return (FILTER_HANDLED);
 } /* ixv_msix_mbx */
@@ -1609,13 +1614,13 @@ ixv_if_enable_intr(if_ctx_t ctx)
 	int i;
 
 	/* For VTEIAC */
-	mask = (1 << sc->vector);
+	mask = (1 << (sc->vector + 1));
 	for (i = 0; i < sc->num_rx_queues; i++, que++)
-		mask |= (1 << que->msix);
+		mask |= (1 << (que->msix + 1));
 	IXGBE_WRITE_REG(hw, IXGBE_VTEIAC, mask);
 
 	/* For VTEIMS */
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << sc->vector));
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << (sc->vector + 1)));
 	que = sc->rx_queues;
 	for (i = 0; i < sc->num_rx_queues; i++, que++)
 		ixv_enable_queue(sc, que->msix);
