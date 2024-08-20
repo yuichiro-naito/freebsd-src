@@ -42,16 +42,28 @@
 
 #include "config.h"
 #include "debug.h"
+#include "iov.h"
 #include "net_backends.h"
 #include "net_backends_priv.h"
 
 #define NG_SBUF_MAX_SIZE (4 * 1024 * 1024)
 
+struct ng_priv {
+	struct mevent *mevp;
+	/*
+	 * A bounce buffer that allows us to implement the peek_recvlen
+	 * callback. In the future we may get the same information from
+	 * the kevent data.
+	 */
+	char bbuf[1 << 16];
+	ssize_t bbuflen;
+};
+
 static int
 ng_init(struct net_backend *be, const char *devname __unused,
 	 nvlist_t *nvl, net_be_rxeof_t cb, void *param)
 {
-	struct tap_priv *p = NET_BE_PRIV(be);
+	struct ng_priv *p = NET_BE_PRIV(be);
 	struct ngm_connect ngc;
 	const char *value, *nodename;
 	int sbsz;
@@ -174,14 +186,64 @@ error:
 	return (-1);
 }
 
+static ssize_t
+ng_peek_recvlen(struct net_backend *be)
+{
+	struct ng_priv *priv = NET_BE_PRIV(be);
+	int size;
+
+	if (priv->bbuflen > 0) {
+		/*
+		 * We already have a packet in the bounce buffer.
+		 * Just return its length.
+		 */
+		return priv->bbuflen;
+	}
+
+	if (ioctl(be->fd, FIONREAD, &size) < 0)
+		return 0;
+
+	priv->bbuflen = 0;
+
+	return size;
+}
+
+static ssize_t
+ng_recv(struct net_backend *be, const struct iovec *iov, int iovcnt)
+{
+	struct ng_priv *priv = NET_BE_PRIV(be);
+	ssize_t ret;
+
+	if (priv->bbuflen > 0) {
+		/*
+		 * A packet is available in the bounce buffer, so
+		 * we read it from there.
+		 */
+		ret = buf_to_iov(priv->bbuf, priv->bbuflen,
+		    iov, iovcnt, 0);
+
+		/* Mark the bounce buffer as empty. */
+		priv->bbuflen = 0;
+
+		return (ret);
+	}
+
+	ret = readv(be->fd, iov, iovcnt);
+	if (ret < 0 && errno == EWOULDBLOCK) {
+		return (0);
+	}
+
+	return (ret);
+}
+
 static struct net_backend ng_backend = {
 	.prefix = "netgraph",
-	.priv_size = sizeof(struct tap_priv),
+	.priv_size = sizeof(struct ng_priv),
 	.init = ng_init,
 	.cleanup = tap_cleanup,
 	.send = tap_send,
-	.peek_recvlen = tap_peek_recvlen,
-	.recv = tap_recv,
+	.peek_recvlen = ng_peek_recvlen,
+	.recv = ng_recv,
 	.recv_enable = tap_recv_enable,
 	.recv_disable = tap_recv_disable,
 	.get_cap = tap_get_cap,

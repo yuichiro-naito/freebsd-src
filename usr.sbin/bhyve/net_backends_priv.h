@@ -129,21 +129,11 @@ SET_DECLARE(net_backend_set, struct net_backend);
 
 struct tap_priv {
 	struct mevent *mevp;
-	/*
-	 * A bounce buffer that allows us to implement the peek_recvlen
-	 * callback. In the future we may get the same information from
-	 * the kevent data.
-	 */
-	char bbuf[1 << 16];
-	ssize_t bbuflen;
 };
 
 void	tap_cleanup(struct net_backend *be);
 ssize_t	tap_send(struct net_backend *be, const struct iovec *iov, int iovcnt);
-ssize_t	tap_recv(struct net_backend *be, const struct iovec *iov, int iovcnt);
-ssize_t	tap_peek_recvlen(struct net_backend *be);
 void	tap_recv_enable(struct net_backend *be);
-ssize_t	tap_recv(struct net_backend *be, const struct iovec *iov, int iovcnt);
 void	tap_recv_disable(struct net_backend *be);
 uint64_t tap_get_cap(struct net_backend *be);
 int	tap_set_cap(struct net_backend *be, uint64_t features,

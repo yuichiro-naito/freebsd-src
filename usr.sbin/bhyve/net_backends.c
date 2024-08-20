@@ -62,7 +62,6 @@
 
 #include "config.h"
 #include "debug.h"
-#include "iov.h"
 #include "mevent.h"
 #include "net_backends.h"
 #include "net_backends_priv.h"
@@ -125,13 +124,11 @@ tap_init(struct net_backend *be, const char *devname,
 	}
 
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_EVENT, CAP_READ, CAP_WRITE);
-	if (caph_rights_limit(be->fd, &rights) == -1)
+	cap_rights_init(&rights, CAP_EVENT, CAP_READ, CAP_WRITE, CAP_IOCTL);
+	if (caph_rights_limit(be->fd, &rights) == -1 ||
+	    caph_ioctls_limit(be->fd, (unsigned long[]){FIONREAD}, 1)  == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
-
-	memset(priv->bbuf, 0, sizeof(priv->bbuf));
-	priv->bbuflen = 0;
 
 	priv->mevp = mevent_add_disabled(be->fd, EVF_READ, cb, param);
 	if (priv->mevp == NULL) {
@@ -155,55 +152,21 @@ tap_send(struct net_backend *be, const struct iovec *iov, int iovcnt)
 	return (writev(be->fd, iov, iovcnt));
 }
 
-ssize_t
+static ssize_t
 tap_peek_recvlen(struct net_backend *be)
 {
-	struct tap_priv *priv = NET_BE_PRIV(be);
-	ssize_t ret;
+	int size;
 
-	if (priv->bbuflen > 0) {
-		/*
-		 * We already have a packet in the bounce buffer.
-		 * Just return its length.
-		 */
-		return priv->bbuflen;
-	}
-
-	/*
-	 * Read the next packet (if any) into the bounce buffer, so
-	 * that we get to know its length and we can return that
-	 * to the caller.
-	 */
-	ret = read(be->fd, priv->bbuf, sizeof(priv->bbuf));
-	if (ret < 0 && errno == EWOULDBLOCK) {
+	if (ioctl(be->fd, FIONREAD, &size) < 0)
 		return (0);
-	}
 
-	if (ret > 0)
-		priv->bbuflen = ret;
-
-	return (ret);
+	return (size);
 }
 
-ssize_t
+static ssize_t
 tap_recv(struct net_backend *be, const struct iovec *iov, int iovcnt)
 {
-	struct tap_priv *priv = NET_BE_PRIV(be);
 	ssize_t ret;
-
-	if (priv->bbuflen > 0) {
-		/*
-		 * A packet is available in the bounce buffer, so
-		 * we read it from there.
-		 */
-		ret = buf_to_iov(priv->bbuf, priv->bbuflen,
-		    iov, iovcnt, 0);
-
-		/* Mark the bounce buffer as empty. */
-		priv->bbuflen = 0;
-
-		return (ret);
-	}
 
 	ret = readv(be->fd, iov, iovcnt);
 	if (ret < 0 && errno == EWOULDBLOCK) {
