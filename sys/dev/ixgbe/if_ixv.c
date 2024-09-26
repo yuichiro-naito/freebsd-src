@@ -598,7 +598,9 @@ ixv_if_init(if_ctx_t ctx)
 	if_t ifp = iflib_get_ifp(ctx);
 	device_t        dev = iflib_get_dev(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
-	int             error = 0;
+	struct ix_rx_queue *que = sc->rx_queues;
+	int             i, error = 0;
+	u32             mask;
 
 	INIT_DEBUGOUT("ixv_if_init: begin");
 	hw->adapter_stopped = false;
@@ -638,7 +640,10 @@ ixv_if_init(if_ctx_t ctx)
 	ixv_configure_ivars(sc);
 
 	/* Set up auto-mask */
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIAM, IXGBE_EICS_RTX_QUEUE);
+	mask = (1 << sc->vector);
+	for (i = 0; i< sc->num_rx_queues; i++, que++)
+		mask |= (1 << que->msix);
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIAM, mask);
 
 	/* Set moderation on the Link interrupt */
 	IXGBE_WRITE_REG(hw, IXGBE_VTEITR(sc->vector), IXGBE_LINK_ITR);
@@ -715,20 +720,11 @@ ixv_msix_mbx(void *arg)
 {
 	struct ixgbe_softc  *sc = arg;
 	struct ixgbe_hw *hw = &sc->hw;
-	u32             reg;
 
 	++sc->link_irq;
+	iflib_admin_intr_deferred(sc->ctx);
 
-	/* First get the cause */
-	reg = IXGBE_READ_REG(hw, IXGBE_VTEICS);
-	/* Clear interrupt with write */
-	IXGBE_WRITE_REG(hw, IXGBE_VTEICR, reg);
-
-	/* Link status change */
-	if (reg & IXGBE_EICR_LSC)
-		iflib_admin_intr_deferred(sc->ctx);
-
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, IXGBE_EIMS_OTHER);
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << sc->vector));
 
 	return (FILTER_HANDLED);
 } /* ixv_msix_mbx */
@@ -1603,15 +1599,19 @@ ixv_if_enable_intr(if_ctx_t ctx)
 	struct ixgbe_softc  *sc = iflib_get_softc(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
 	struct ix_rx_queue *que = sc->rx_queues;
-	u32             mask = (IXGBE_EIMS_ENABLE_MASK & ~IXGBE_EIMS_RTX_QUEUE);
+	u32             mask;
+	int i;
 
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, mask);
-
-	mask = IXGBE_EIMS_ENABLE_MASK;
-	mask &= ~(IXGBE_EIMS_OTHER | IXGBE_EIMS_LSC);
+	/* For VTEIAC */
+	mask = (1 << sc->vector);
+	for (i = 0; i < sc->num_rx_queues; i++, que++)
+		mask |= (1 << que->msix);
 	IXGBE_WRITE_REG(hw, IXGBE_VTEIAC, mask);
 
-	for (int i = 0; i < sc->num_rx_queues; i++, que++)
+	/* For VTEIMS */
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, (1 << sc->vector));
+	que = sc->rx_queues;
+	for (i = 0; i < sc->num_rx_queues; i++, que++)
 		ixv_enable_queue(sc, que->msix);
 
 	IXGBE_WRITE_FLUSH(hw);
